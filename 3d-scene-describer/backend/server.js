@@ -1,14 +1,21 @@
+require('dotenv').config();
+
 const express = require("express");
 const cors = require("cors");
 const Anthropic = require("@anthropic-ai/sdk");
+const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-const client = new Anthropic({
+const anthropicClient = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY || ""
 });
+
+const geminiClient = process.env.GOOGLE_GEMINI_API_KEY 
+  ? new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY)
+  : null;
 
 const MOCK_DB = {
   "căn hộ": {
@@ -109,6 +116,29 @@ const MOCK_DB = {
   }
 };
 
+async function generateWithClaude(systemPrompt, userPrompt) {
+  const message = await anthropicClient.messages.create({
+    model: "claude-3-5-sonnet-20241022",
+    max_tokens: 1024,
+    system: systemPrompt,
+    messages: [
+      { role: "user", content: userPrompt }
+    ]
+  });
+  return message.content[0].type === "text" ? message.content[0].text : "";
+}
+
+async function generateWithGemini(systemPrompt, userPrompt) {
+  const model = geminiClient.getGenerativeModel({ 
+    model: "gemini-2.0-flash",
+    systemInstruction: systemPrompt 
+  });
+  
+  const result = await model.generateContent(userPrompt);
+  const response = await result.response;
+  return response.text();
+}
+
 async function generateSceneDescription(projectName, spaceType, description, targetAudience) {
   const systemPrompt = `Bạn là chuyên gia về không gian 3D và marketing bất động sản.
 Nhiệm vụ: Tạo nội dung tiếp thị chuyên nghiệp và hướng dẫn số hóa 3D cho các dự án.
@@ -134,17 +164,34 @@ Chú ý:
 
 Trả về JSON hợp lệ.`;
 
-  try {
-    const message = await client.messages.create({
-      model: "claude-3-5-sonnet-20241022",
-      max_tokens: 1024,
-      system: systemPrompt,
-      messages: [
-        { role: "user", content: userPrompt }
-      ]
-    });
+  let responseText = "";
+  let usedModel = "";
 
-    const responseText = message.content[0].type === "text" ? message.content[0].text : "";
+  try {
+    // Try Claude first
+    if (process.env.ANTHROPIC_API_KEY) {
+      try {
+        responseText = await generateWithClaude(systemPrompt, userPrompt);
+        usedModel = "claude-3-5-sonnet";
+      } catch (claudeError) {
+        console.warn("Claude API failed, trying Gemini:", claudeError.message);
+        
+        // Fallback to Gemini
+        if (geminiClient) {
+          responseText = await generateWithGemini(systemPrompt, userPrompt);
+          usedModel = "gemini-2.0-flash";
+        } else {
+          throw claudeError;
+        }
+      }
+    } else if (geminiClient) {
+      // If no Claude key, use Gemini directly
+      responseText = await generateWithGemini(systemPrompt, userPrompt);
+      usedModel = "gemini-2.0-flash";
+    } else {
+      throw new Error("No AI service configured (Claude or Gemini)");
+    }
+
     const jsonMatch = responseText.match(/\{[\s\S]*\}/);
     
     if (!jsonMatch) {
@@ -159,12 +206,12 @@ Trả về JSON hợp lệ.`;
       digitizationNotes: Array.isArray(result.digitizationNotes) ? result.digitizationNotes : [],
       tone: spaceType,
       generatedAt: new Date().toISOString(),
-      model: "claude-3-5-sonnet"
+      model: usedModel
     };
   } catch (error) {
-    console.error("Claude API Error:", error.message);
+    console.error("AI Generation Error:", error.message);
     
-    // Fallback to mock data nếu API fail
+    // Fallback to mock data
     const key = Object.keys(MOCK_DB).find(k => spaceType.toLowerCase().includes(k)) || "văn phòng";
     const data = MOCK_DB[key];
     const titleSuffixes = ["– Trải Nghiệm Số Hóa Đỉnh Cao", "– Không Gian Số 3D Toàn Diện", "| Virtual Tour Chuyên Nghiệp", "– Khám Phá Mọi Góc Độ"];
@@ -218,16 +265,28 @@ app.post("/api/describe-scene", async (req, res) => {
 });
 
 app.get("/api/health", (_, res) => {
-  const hasApiKey = !!process.env.ANTHROPIC_API_KEY;
+  const hasClaudeKey = !!process.env.ANTHROPIC_API_KEY;
+  const hasGeminiKey = !!process.env.GOOGLE_GEMINI_API_KEY;
+  
+  let mode = "offline";
+  if (hasClaudeKey) mode = "claude-ai";
+  else if (hasGeminiKey) mode = "gemini-2.0-flash";
+  
   res.json({ 
     status: "ok", 
-    mode: hasApiKey ? "claude-ai" : "mock-fallback",
-    apiConfigured: hasApiKey
+    mode: mode,
+    aiServices: {
+      claude: hasClaudeKey,
+      gemini: hasGeminiKey
+    },
+    description: hasClaudeKey ? "Using Claude (Gemini fallback)" : hasGeminiKey ? "Using Gemini only" : "Using mock data (offline)"
   });
 });
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
-  const mode = process.env.ANTHROPIC_API_KEY ? "Claude API (LIVE)" : "Mock Mode (Fallback)";
-  console.log(`Backend running on http://localhost:${PORT} [${mode}]`);
+  const claudeStatus = process.env.ANTHROPIC_API_KEY ? "✓ Claude API" : "✗ No Claude";
+  const geminiStatus = process.env.GOOGLE_GEMINI_API_KEY ? "✓ Gemini API" : "✗ No Gemini";
+  console.log(`Backend running on http://localhost:${PORT}`);
+  console.log(`AI Services: ${claudeStatus} | ${geminiStatus}`);
 });

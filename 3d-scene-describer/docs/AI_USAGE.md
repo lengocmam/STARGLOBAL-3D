@@ -1,18 +1,27 @@
 # AI Usage Documentation – 3D Scene Describer
 
-## 1. AI Tool được sử dụng
+## 1. AI Tools được sử dụng
 
+### Primary: Claude 3.5 Sonnet
 **Tool:** Claude 3.5 Sonnet (Anthropic API)  
 **Model ID:** `claude-3-5-sonnet-20241022`  
 **Provider:** Anthropic  
-**Setup:** Environment variable `ANTHROPIC_API_KEY` (từ Anthropic Console)
 
-### Tại sao chọn Claude 3.5 Sonnet?
-- ✅ Giá rẻ, tốc độ nhanh (~2-3s/request)
-- ✅ Hiểu context tốt để tạo nội dung marketing phù hợp
-- ✅ Output JSON reliable, ít hallucinate
-- ✅ Hỗ trợ Vietnamese tốt
-- ✅ Rate limit cao (50K tokens/min)
+### Fallback: Google Gemini
+**Tool:** Google Generative AI (Gemini Pro)  
+**Model ID:** `gemini-pro`  
+**Provider:** Google  
+
+### Strategy
+```
+Try Claude → If fail → Use Gemini → If fail → Use Mock Data
+```
+
+**Tại sao 2 LLM?**
+- ✅ High reliability (fallback mechanism)
+- ✅ Cost optimization (try cheaper first)
+- ✅ Reduced latency (parallel backup)
+- ✅ Geographic redundancy
 
 ---
 
@@ -28,8 +37,9 @@ POST /api/describe-scene
 Backend: Validate dữ liệu
     ↓
 Claude API: generateSceneDescription()
-    ↓
-Claude System Prompt → User Prompt → JSON Response
+    ├─ Try: Claude (if ANTHROPIC_API_KEY set)
+    ├─ Catch Error → Try: Gemini (if GOOGLE_GEMINI_API_KEY set)
+    └─ Catch Error → Use: Mock Data (fallback)
     ↓
 Parse JSON & Return to Frontend
     ↓
@@ -210,46 +220,96 @@ catch (error) {
 
 ### 5.1 Local Development
 
-**Step 1: Get API Key**
+**Step 1: Get API Keys**
+
+**Claude (Anthropic):**
 1. Đăng ký tại https://console.anthropic.com
-2. Tạo API key mới (save securely)
+2. Tạo API key mới: https://console.anthropic.com/account/keys
+3. Format: `sk-ant-xxxxxx`
 
-**Step 2: Set Environment Variable**
+**Gemini (Google):**
+1. Đăng ký tại https://aistudio.google.com/apikey
+2. Tạo API key mới (free tier available)
+3. Format: `AIzaSy...` (usually long string)
+
+**Step 2: Create .env file**
+
+Copy `backend/.env.example` → `backend/.env`:
+
 ```bash
-# Windows PowerShell
-$env:ANTHROPIC_API_KEY="sk-ant-xxxxxx"
-
-# Windows CMD
-set ANTHROPIC_API_KEY=sk-ant-xxxxxx
-
-# Linux/Mac
-export ANTHROPIC_API_KEY="sk-ant-xxxxxx"
+cd backend
+cp .env.example .env  # Linux/Mac
+copy .env.example .env  # Windows
 ```
 
-**Step 3: Verify Connection**
+**Step 3: Fill in keys**
+
+Edit `backend/.env`:
+```env
+ANTHROPIC_API_KEY=sk-ant-your-claude-key
+GOOGLE_GEMINI_API_KEY=your-gemini-key
+PORT=3001
+```
+
+**Step 4: Verify .env is in .gitignore**
+
+Check `backend/.gitignore`:
+```
+node_modules/
+.env          # ← Must have this
+.env.local
+```
+
+**⚠️ CRITICAL: NEVER commit .env file**
+
+**Step 5: Install & Run**
+
 ```bash
 cd backend
 npm install
 npm start
 
 # Output should show:
-# Backend running on http://localhost:3001 [Claude API (LIVE)]
+# Backend running on http://localhost:3001
+# AI Services: ✓ Claude API | ✓ Gemini API
 ```
 
-**Step 4: Test endpoint**
-```bash
-curl -X GET http://localhost:3001/api/health
+**Step 6: Test Health Endpoint**
 
-# Expected response:
-# {"status":"ok","mode":"claude-ai","apiConfigured":true}
+```bash
+curl http://localhost:3001/api/health
+
+# Response:
+{
+  "status": "ok",
+  "mode": "claude-ai",
+  "aiServices": {
+    "claude": true,
+    "gemini": true
+  },
+  "description": "Using Claude (Gemini fallback)"
+}
 ```
 
-### 5.2 Testing với Mock Mode
+### 5.2 Fallback Priority
 
-Nếu không muốn dùng API key (test locally):
+| Scenario | Behavior |
+|----------|----------|
+| Both keys set | Uses Claude, falls back to Gemini if Claude fails |
+| Only Claude key | Uses Claude only (mock fallback if fails) |
+| Only Gemini key | Uses Gemini only (mock fallback if fails) |
+| No keys | Uses mock data (demo mode) |
+
+### 5.3 Testing mit Mock Mode
+
 ```bash
+# Start without setting any API keys
 npm start
-# Output shows: Backend running on http://localhost:3001 [Mock Mode (Fallback)]
+
+# Output shows:
+# AI Services: ✗ No Claude | ✗ No Gemini
+# Health endpoint: mode = "offline"
+# All responses use MOCK_DB
 ```
 
 ---
