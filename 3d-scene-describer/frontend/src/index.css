@@ -33,6 +33,10 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(-
 .subtitle{font-size:12px;color:var(--muted);display:block;margin-top:1px}
 .header-right{display:flex;align-items:center;gap:12px}
 .badge-mock{font-size:11px;background:rgba(230,195,90,0.1);color:var(--gold);border:1px solid rgba(230,195,90,0.25);padding:3px 10px;border-radius:20px;letter-spacing:0.3px}
+.badge-mode{font-size:11px;padding:4px 11px;border-radius:20px;letter-spacing:0.3px;border:1px solid;font-weight:500;cursor:help}
+.badge-mode.badge-claude-ai{background:rgba(79,158,255,0.1);color:var(--accent);border-color:rgba(79,158,255,0.25)}
+.badge-mode.badge-mock-fallback{background:rgba(230,195,90,0.1);color:var(--gold);border-color:rgba(230,195,90,0.25)}
+.badge-mode.badge-offline{background:rgba(255,95,110,0.1);color:var(--danger);border-color:rgba(255,95,110,0.25)}
 
 /* TAB NAV */
 .tab-nav{display:flex;background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:3px;gap:2px}

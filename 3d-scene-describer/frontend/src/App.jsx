@@ -58,8 +58,23 @@ export default function App() {
   const [tab, setTab] = useState("form"); // form | history
   const [compareIds, setCompareIds] = useState([]);
   const [showCompare, setShowCompare] = useState(false);
+  const [apiMode, setApiMode] = useState("loading");
   const resultRef = useRef(null);
   const { history, add, remove, clear } = useHistory();
+
+  // Check API mode on mount
+  useEffect(() => {
+    const checkApiMode = async () => {
+      try {
+        const res = await fetch("http://localhost:3001/api/health");
+        const data = await res.json();
+        setApiMode(data.mode || "mock-fallback");
+      } catch (err) {
+        setApiMode("offline");
+      }
+    };
+    checkApiMode();
+  }, []);
 
   useEffect(() => {
     if (result && resultRef.current) resultRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -114,7 +129,9 @@ export default function App() {
           </div>
         </div>
         <div className="header-right">
-          <span className="badge-mock">Mock Mode</span>
+          <span className={`badge-mode badge-${apiMode}`} title={`API Mode: ${apiMode}`}>
+            {apiMode === "claude-ai" ? "🤖 Claude AI" : apiMode === "mock-fallback" ? "📋 Mock Data" : "⚠️ Offline"}
+          </span>
           <nav className="tab-nav">
             <button className={tab === "form" ? "active" : ""} onClick={() => setTab("form")}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="9" x2="15" y2="9"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="12" y2="17"/></svg>

@@ -1,9 +1,14 @@
 const express = require("express");
 const cors = require("cors");
+const Anthropic = require("@anthropic-ai/sdk");
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+const client = new Anthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY || ""
+});
 
 const MOCK_DB = {
   "căn hộ": {
@@ -104,6 +109,79 @@ const MOCK_DB = {
   }
 };
 
+async function generateSceneDescription(projectName, spaceType, description, targetAudience) {
+  const systemPrompt = `Bạn là chuyên gia về không gian 3D và marketing bất động sản.
+Nhiệm vụ: Tạo nội dung tiếp thị chuyên nghiệp và hướng dẫn số hóa 3D cho các dự án.
+
+Yêu cầu output (JSON):
+{
+  "title": "Tiêu đề hấp dẫn (không vượt 80 ký tự)",
+  "shortDescription": "Đoạn mô tả ngắn (2-3 câu, phù hợp nhóm khách hàng)",
+  "highlights": ["5 điểm nổi bật của không gian"],
+  "digitizationNotes": ["5 gợi ý kỹ thuật khi chụp/số hóa 3D loại không gian này"]
+}
+
+Chú ý:
+- Tone phù hợp loại không gian và nhóm khách hàng
+- Highlights phải cụ thể, không chung chung
+- Digitization notes phải chuyên nghiệp, dựa vào đặc điểm riêng của loại không gian`;
+
+  const userPrompt = `Tạo nội dung cho dự án 3D:
+- Tên dự án: ${projectName}
+- Loại không gian: ${spaceType}
+- Mô tả: ${description}
+- Nhóm khách hàng: ${targetAudience}
+
+Trả về JSON hợp lệ.`;
+
+  try {
+    const message = await client.messages.create({
+      model: "claude-3-5-sonnet-20241022",
+      max_tokens: 1024,
+      system: systemPrompt,
+      messages: [
+        { role: "user", content: userPrompt }
+      ]
+    });
+
+    const responseText = message.content[0].type === "text" ? message.content[0].text : "";
+    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+    
+    if (!jsonMatch) {
+      throw new Error("AI response is not valid JSON");
+    }
+
+    const result = JSON.parse(jsonMatch[0]);
+    return {
+      title: result.title || projectName,
+      shortDescription: result.shortDescription || "",
+      highlights: Array.isArray(result.highlights) ? result.highlights : [],
+      digitizationNotes: Array.isArray(result.digitizationNotes) ? result.digitizationNotes : [],
+      tone: spaceType,
+      generatedAt: new Date().toISOString(),
+      model: "claude-3-5-sonnet"
+    };
+  } catch (error) {
+    console.error("Claude API Error:", error.message);
+    
+    // Fallback to mock data nếu API fail
+    const key = Object.keys(MOCK_DB).find(k => spaceType.toLowerCase().includes(k)) || "văn phòng";
+    const data = MOCK_DB[key];
+    const titleSuffixes = ["– Trải Nghiệm Số Hóa Đỉnh Cao", "– Không Gian Số 3D Toàn Diện", "| Virtual Tour Chuyên Nghiệp", "– Khám Phá Mọi Góc Độ"];
+    const suffix = titleSuffixes[Math.floor(Math.random() * titleSuffixes.length)];
+
+    return {
+      title: `${projectName} ${suffix}`,
+      shortDescription: `${projectName} được số hóa 3D hoàn toàn, mang đến trải nghiệm tham quan trực tuyến chân thực dành riêng cho ${targetAudience}. Với công nghệ quét laser độ chính xác cao, từng chi tiết không gian ${key} được tái hiện trung thực.`,
+      highlights: data.highlights,
+      digitizationNotes: data.notes,
+      tone: data.tone,
+      generatedAt: new Date().toISOString(),
+      model: "mock-fallback"
+    };
+  }
+}
+
 function getMockData(projectName, spaceType, description, targetAudience) {
   const key = Object.keys(MOCK_DB).find(k => spaceType.toLowerCase().includes(k)) || "văn phòng";
   const data = MOCK_DB[key];
@@ -122,6 +200,7 @@ function getMockData(projectName, spaceType, description, targetAudience) {
 
 app.post("/api/describe-scene", async (req, res) => {
   const { projectName, spaceType, description, targetAudience } = req.body;
+  
   if (!projectName || !spaceType || !description || !targetAudience)
     return res.status(400).json({ error: "Vui lòng điền đầy đủ tất cả các trường." });
   if (projectName.trim().length < 2)
@@ -129,12 +208,26 @@ app.post("/api/describe-scene", async (req, res) => {
   if (description.trim().length < 10)
     return res.status(400).json({ error: "Mô tả phải có ít nhất 10 ký tự." });
 
-  await new Promise(r => setTimeout(r, 900)); // simulate AI delay
-  const result = getMockData(projectName, spaceType, description, targetAudience);
-  res.json({ success: true, data: result });
+  try {
+    const result = await generateSceneDescription(projectName, spaceType, description, targetAudience);
+    res.json({ success: true, data: result });
+  } catch (error) {
+    console.error("Error generating scene description:", error);
+    res.status(500).json({ error: "Lỗi khi xử lý dữ liệu. Vui lòng thử lại." });
+  }
 });
 
-app.get("/api/health", (_, res) => res.json({ status: "ok", mode: "mock" }));
+app.get("/api/health", (_, res) => {
+  const hasApiKey = !!process.env.ANTHROPIC_API_KEY;
+  res.json({ 
+    status: "ok", 
+    mode: hasApiKey ? "claude-ai" : "mock-fallback",
+    apiConfigured: hasApiKey
+  });
+});
 
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => console.log(`Backend running on http://localhost:${PORT} [MOCK MODE]`));
+app.listen(PORT, () => {
+  const mode = process.env.ANTHROPIC_API_KEY ? "Claude API (LIVE)" : "Mock Mode (Fallback)";
+  console.log(`Backend running on http://localhost:${PORT} [${mode}]`);
+});
